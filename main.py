@@ -1,362 +1,573 @@
 import csv
 import random
 import copy
+from tabulate import tabulate
+import datetime
 
-# Константи для розкладу
-DAYS_PER_WEEK = 5
-SLOTS_PER_DAY = 4
-WEEKS = ['Парний', 'Непарний']
-TOTAL_SLOTS = DAYS_PER_WEEK * SLOTS_PER_DAY * len(WEEKS)
+# Структури даних
+class Auditorium:
+    def __init__(self, auditorium_id, capacity):
+        self.id = auditorium_id
+        self.capacity = int(capacity)
 
-# Часові слоти з урахуванням парних/непарних тижнів
-TIMESLOTS = [f"{week}, День {day+1}, Пара {slot+1}" for week in WEEKS for day in range(DAYS_PER_WEEK) for slot in range(SLOTS_PER_DAY)]
+class Group:
+    def __init__(self, group_number, student_amount, subgroups):
+        self.number = group_number
+        self.size = int(student_amount)
+        self.subgroups = subgroups.split(';') if subgroups else []
 
-# Завантаження даних
-def load_groups(filename):
-    groups = {}
-    with open(filename, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            group_id = row['GroupID']
-            groups[group_id] = {
-                'NumStudents': int(row['NumStudents']),
-                'Subgroups': row['Subgroups'].split(';') if row['Subgroups'] else []
-            }
-    return groups
+class Lecturer:
+    def __init__(self, lecturer_id, name, subjects_can_teach, types_can_teach, max_hours_per_week):
+        self.id = lecturer_id
+        self.name = name
+        self.subjects_can_teach = [s.strip() for s in subjects_can_teach.split(';')] if subjects_can_teach else []
+        self.types_can_teach = [t.strip() for t in types_can_teach.split(';')] if types_can_teach else []
+        self.max_hours_per_week = int(max_hours_per_week)
+        self.assigned_hours = 0  # Для відстеження навантаження
 
-def load_subjects(filename):
-    subjects = []
-    with open(filename, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            subjects.append({
-                'SubjectID': row['SubjectID'],
-                'SubjectName': row['SubjectName'],
-                'GroupID': row['GroupID'],
-                'NumLectures': int(row['NumLectures']),
-                'NumPracticals': int(row['NumPracticals']),
-                'RequiresSubgroups': row['RequiresSubgroups'] == 'Yes',
-                'WeekType': row['WeekType'] if 'WeekType' in row else 'Both'  # 'Парний', 'Непарний' або 'Both'
-            })
-    return subjects
+class Subject:
+    def __init__(self, subject_id, name, group_id, num_lectures, num_practicals, requires_subgroups, week_type):
+        self.id = subject_id
+        self.name = name
+        self.group_id = group_id
+        self.num_lectures = int(num_lectures)
+        self.num_practicals = int(num_practicals)
+        self.requires_subgroups = True if requires_subgroups.lower() == 'yes' else False
+        self.week_type = week_type.lower()  # 'both', 'even', 'odd'
 
-def load_lecturers(filename):
-    lecturers = {}
-    with open(filename, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            lecturer_id = row['LecturerID']
-            lecturers[lecturer_id] = {
-                'LecturerName': row['LecturerName'],
-                'SubjectsCanTeach': row['SubjectsCanTeach'].split(';'),
-                'TypesCanTeach': row['TypesCanTeach'].split(';'),
-                'MaxHoursPerWeek': int(row['MaxHoursPerWeek'])
-            }
-    return lecturers
-
-def load_auditoriums(filename):
-    auditoriums = {}
-    with open(filename, newline='', encoding='utf-8') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            auditorium_id = row['AuditoriumID']
-            auditoriums[auditorium_id] = int(row['Capacity'])
+# Функції для читання CSV-файлів
+def read_auditoriums(filename):
+    auditoriums = []
+    try:
+        with open(filename, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile, delimiter=';')
+            print(f"Headers for {filename}: {reader.fieldnames}")  # Доданий рядок
+            for row in reader:
+                try:
+                    auditoriums.append(Auditorium(row['auditoriumID'], row['capacity']))
+                except ValueError as ve:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: {ve}")
+                except KeyError as ke:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: Відсутнє поле {ke}")
+    except FileNotFoundError:
+        print(f"Файл {filename} не знайдено. Переконайтеся, що він знаходиться у правильній директорії.")
+    except Exception as e:
+        print(f"Помилка при читанні {filename}: {e}")
     return auditoriums
 
-# Клас для подій розкладу
-class Event:
-    def __init__(self, timeslot, group_ids, subject_id, subject_name, lecturer_id, auditorium_id, event_type, subgroup_ids=None, week_type='Both'):
-        self.timeslot = timeslot
-        self.group_ids = group_ids  # Можливо, декілька груп
-        self.subject_id = subject_id
-        self.subject_name = subject_name
-        self.lecturer_id = lecturer_id
-        self.auditorium_id = auditorium_id
-        self.event_type = event_type
-        self.subgroup_ids = subgroup_ids  # Словник групи: підгрупа
-        self.week_type = week_type  # 'Парний', 'Непарний', 'Both'
+def read_groups(filename):
+    groups = []
+    try:
+        with open(filename, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile, delimiter=';')
+            print(f"Headers for {filename}: {reader.fieldnames}")  # Доданий рядок
+            for row in reader:
+                try:
+                    groups.append(Group(row['groupNumber'], row['studentAmount'], row['subgroups']))
+                except ValueError as ve:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: {ve}")
+                except KeyError as ke:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: Відсутнє поле {ke}")
+    except FileNotFoundError:
+        print(f"Файл {filename} не знайдено. Переконайтеся, що він знаходиться у правильній директорії.")
+    except Exception as e:
+        print(f"Помилка при читанні {filename}: {e}")
+    return groups
 
-# Клас для розкладу
+def read_lecturers(filename):
+    lecturers = []
+    try:
+        with open(filename, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile, delimiter=';')
+            print(f"Headers for {filename}: {reader.fieldnames}")  # Доданий рядок
+            for row in reader:
+                try:
+                    lecturers.append(Lecturer(
+                        row['lecturerID'],
+                        row['lecturerName'],
+                        row['subjectsCanTeach'],
+                        row['typesCanTeach'],
+                        row['maxHoursPerWeek']
+                    ))
+                except ValueError as ve:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: {ve}")
+                    print(f"Зміст рядка: {row}")
+                except KeyError as ke:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: Відсутнє поле {ke}")
+    except FileNotFoundError:
+        print(f"Файл {filename} не знайдено. Переконайтеся, що він знаходиться у правильній директорії.")
+    except Exception as e:
+        print(f"Помилка при читанні {filename}: {e}")
+    return lecturers
+
+def read_subjects(filename):
+    subjects = []
+    try:
+        with open(filename, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile, delimiter=';')
+            print(f"Headers for {filename}: {reader.fieldnames}")  # Доданий рядок
+            for row in reader:
+                try:
+                    subjects.append(Subject(
+                        row['id'],
+                        row['name'],
+                        row['groupID'],
+                        row['numLectures'],
+                        row['numPracticals'],
+                        row['requiresSubgroups'],
+                        row['weekType']
+                    ))
+                except ValueError as ve:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: {ve}")
+                except KeyError as ke:
+                    print(f"Помилка в рядку {reader.line_num} файлу {filename}: Відсутнє поле {ke}")
+    except FileNotFoundError:
+        print(f"Файл {filename} не знайдено. Переконайтеся, що він знаходиться у правильній директорії.")
+    except Exception as e:
+        print(f"Помилка при читанні {filename}: {e}")
+    return subjects
+
+# Завантаження даних
+auditoriums = read_auditoriums('auditoriums.csv')
+groups = read_groups('groups.csv')
+lecturers = read_lecturers('lecturers.csv')  # Змінено ім'я файлу на 'lecturers.csv'
+subjects = read_subjects('subjects.csv')
+
+# Перевірка відповідності groupID у subjects.csv з groups.csv
+valid_group_ids = set(group.number for group in groups)
+filtered_subjects = []
+for subject in subjects:
+    if subject.group_id in valid_group_ids:
+        filtered_subjects.append(subject)
+    else:
+        print(f"Warning: Group {subject.group_id} not found for subject {subject.name}")
+subjects = filtered_subjects
+
+# Перевірка, що кожен subject має принаймні одного викладача
+subject_ids = set(subject.id for subject in subjects)
+lecturer_subjects = set()
+for lecturer in lecturers:
+    lecturer_subjects.update(lecturer.subjects_can_teach)
+
+missing_subjects = subject_ids - lecturer_subjects
+if missing_subjects:
+    print(f"Warning: Для наступних предметів немає викладачів: {', '.join(missing_subjects)}")
+
+# Визначення часів: 5 днів, 4 періоди на день
+DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+PERIODS = ['1', '2', '3', '4']  # Періоди у день
+TIME_SLOTS = [(day, period) for day in DAYS for period in PERIODS]
+
+class Lesson:
+    def __init__(self, subject, lesson_type, group, subgroup=None):
+        self.subject = subject
+        self.type = lesson_type  # 'Лекція' або 'Практика'
+        self.group = group
+        self.subgroup = subgroup  # Для практичних, якщо потрібні підгрупи
+        self.time_slot = None
+        self.auditorium = None
+        self.lecturer = None
+
 class Schedule:
     def __init__(self):
-        self.events = []
+        # Ключ: time_slot (day, period), Значення: список занять у цей час
+        self.timetable = {time_slot: [] for time_slot in TIME_SLOTS}
+        self.fitness = None  # Буде розраховано
 
-    def add_event(self, event):
-        if event:
-            self.events.append(event)
+    def calculate_fitness(self):
+        penalty = 0
+        # Мінімізація прогалин у розкладі для груп (м'яке обмеження)
+        for group in groups:
+            schedule_list = []
+            for time_slot, lessons in self.timetable.items():
+                for lesson in lessons:
+                    if lesson.group.number == group.number:
+                        schedule_list.append(time_slot)
+            schedule_sorted = sorted(schedule_list, key=lambda x: (DAYS.index(x[0]), int(x[1])))
+            for i in range(len(schedule_sorted) - 1):
+                day1, period1 = schedule_sorted[i]
+                day2, period2 = schedule_sorted[i + 1]
+                if day1 == day2:
+                    gaps = int(period2) - int(period1) - 1
+                    if gaps > 0:
+                        penalty += gaps
 
-    # Оцінка розкладу (функція оцінки №1)
-    def fitness(self, groups, lecturers, auditoriums):
-        hard_constraints_violations = 0
-        soft_constraints_score = 0
+        # Мінімізація прогалин у розкладі для викладачів (м'яке обмеження)
+        for lecturer in lecturers:
+            schedule_list = []
+            for time_slot, lessons in self.timetable.items():
+                for lesson in lessons:
+                    if lesson.lecturer and lesson.lecturer.id == lecturer.id:
+                        schedule_list.append(time_slot)
+            schedule_sorted = sorted(schedule_list, key=lambda x: (DAYS.index(x[0]), int(x[1])))
+            for i in range(len(schedule_sorted) - 1):
+                day1, period1 = schedule_sorted[i]
+                day2, period2 = schedule_sorted[i + 1]
+                if day1 == day2:
+                    gaps = int(period2) - int(period1) - 1
+                    if gaps > 0:
+                        penalty += gaps
 
-        lecturer_times = {}
-        group_times = {}
-        auditorium_times = {}
-        lecturer_hours = {}
+        # Балансування навантаження на викладачів (м'яке обмеження)
+        for lecturer in lecturers:
+            hours_assigned = 0
+            for time_slot, lessons in self.timetable.items():
+                for lesson in lessons:
+                    if lesson.lecturer and lesson.lecturer.id == lecturer.id:
+                        hours_assigned += 1
+            if hours_assigned > lecturer.max_hours_per_week:
+                penalty += (hours_assigned - lecturer.max_hours_per_week) * 2  # Штраф за перевищення
 
-        for event in self.events:
-            # Жорсткі обмеження
-            lt_key = (event.lecturer_id, event.timeslot)
-            if lt_key in lecturer_times:
-                hard_constraints_violations += 1
+        # Додавання штрафів за недотримання або перевищення кількості годин по предметах (м'яке обмеження)
+        for subject in subjects:
+            scheduled_lectures = 0
+            scheduled_practicals = 0
+            for time_slot, lessons in self.timetable.items():
+                for lesson in lessons:
+                    if lesson.subject.id == subject.id:
+                        if lesson.type == 'Лекція':
+                            scheduled_lectures += 1
+                        elif lesson.type == 'Практика':
+                            scheduled_practicals += 1
+            # Обчислення різниці між запланованими та необхідними годинами
+            diff_lectures = abs(scheduled_lectures - subject.num_lectures)
+            diff_practicals = abs(scheduled_practicals - subject.num_practicals)
+            # Додавання штрафу за кожну недодану або перевищену годину
+            penalty += (diff_lectures + diff_practicals)
+
+        # Захист від ділення на нуль або негативного значення
+        if penalty < 0:
+            penalty = 0
+
+        self.fitness = 1 / (1 + penalty)
+
+def get_possible_lecturers(lesson):
+    # Співставляємо викладачів за subject.id та типом заняття (жорстке обмеження)
+    possible = [lecturer for lecturer in lecturers if
+               lesson.subject.id in lecturer.subjects_can_teach and
+               lesson.type in lecturer.types_can_teach and
+               lecturer.assigned_hours < lecturer.max_hours_per_week]
+    if not possible:
+        print(f"No lecturer available for {lesson.subject.name} ({lesson.type}) with subject ID {lesson.subject.id}")
+    return possible
+
+def is_conflict(lesson, time_slot, schedule):
+    for existing_lesson in schedule.timetable[time_slot]:
+        # Перевірка викладача (жорстке обмеження)
+        if lesson.lecturer and existing_lesson.lecturer and existing_lesson.lecturer.id == lesson.lecturer.id:
+            return True
+        # Перевірка групи (жорстке обмеження)
+        if existing_lesson.group.number == lesson.group.number:
+            # Якщо підгрупи, перевіряємо підгрупу
+            if lesson.subgroup and existing_lesson.subgroup:
+                if existing_lesson.subgroup == lesson.subgroup:
+                    return True
             else:
-                lecturer_times[lt_key] = event
+                return True
+        # Перевірка аудиторії (жорстке обмеження)
+        if lesson.auditorium and existing_lesson.auditorium and existing_lesson.auditorium.id == lesson.auditorium.id:
+            # Виняток для лекцій з одним викладачем
+            if not (
+                lesson.type == 'Лекція' and
+                existing_lesson.type == 'Лекція' and
+                lesson.lecturer and existing_lesson.lecturer and
+                lesson.lecturer.id == existing_lesson.lecturer.id
+            ):
+                return True
+    return False
 
-            # Для кожної групи в події
-            for group_id in event.group_ids:
-                subgroup_id = event.subgroup_ids.get(group_id) if event.subgroup_ids else 'all'
-                gt_key = (group_id, subgroup_id, event.timeslot)
-                if gt_key in group_times:
-                    hard_constraints_violations += 1
-                else:
-                    group_times[gt_key] = event
+# Генетичний алгоритм налаштування
+POPULATION_SIZE = 50
+GENERATIONS = 100
 
-            # Обмеження на аудиторії
-            at_key = (event.auditorium_id, event.timeslot)
-            if at_key in auditorium_times:
-                # Якщо це лекція та той самий викладач, дозволяємо об'єднувати
-                existing_event = auditorium_times[at_key]
-                if event.event_type == 'Лекція' and existing_event.event_type == 'Лекція' and event.lecturer_id == existing_event.lecturer_id:
-                    # Дозволено
-                    pass
-                else:
-                    hard_constraints_violations += 1
-            else:
-                auditorium_times[at_key] = event
-
-            # Обмеження по максимальній кількості годин викладача
-            week = event.timeslot.split(', ')[0]
-            lecturer_hours_key = (event.lecturer_id, week)
-            lecturer_hours[lecturer_hours_key] = lecturer_hours.get(lecturer_hours_key, 0) + 1.5
-            if lecturer_hours[lecturer_hours_key] > lecturers[event.lecturer_id]['MaxHoursPerWeek']:
-                hard_constraints_violations += 1
-
-            # Нежорсткі обмеження
-            total_group_size = sum(groups[g]['NumStudents'] // 2 if event.subgroup_ids and event.subgroup_ids.get(g) else groups[g]['NumStudents'] for g in event.group_ids)
-            if auditoriums[event.auditorium_id] < total_group_size:
-                soft_constraints_score += 1
-
-            if event.subject_id not in lecturers[event.lecturer_id]['SubjectsCanTeach']:
-                soft_constraints_score += 1
-
-            if event.event_type not in lecturers[event.lecturer_id]['TypesCanTeach']:
-                soft_constraints_score += 1
-
-        # Функціонал якості №1: Мінімізуємо кількість порушень
-        total_score = hard_constraints_violations * 1000 + soft_constraints_score
-        return total_score
-
-    # Альтернативна функція оцінки (функція оцінки №2)
-    def fitness_alternative(self, groups, lecturers, auditoriums):
-        # Враховуємо баланс навантаження викладачів та кількість вікон у розкладі
-        total_penalty = self.fitness(groups, lecturers, auditoriums)  # Використовуємо першу функцію як базу
-
-        # Додаємо м'яке обмеження на кількість вікон
-        lecturer_windows = {}
-        group_windows = {}
-
-        for event in self.events:
-            day_slot = event.timeslot.split(', ')
-            day = day_slot[1]
-            slot = int(day_slot[2].split(' ')[1])
-            week = day_slot[0]
-
-            # Для викладачів
-            lecturer_key = (event.lecturer_id, week)
-            if lecturer_key not in lecturer_windows:
-                lecturer_windows[lecturer_key] = {}
-            if day not in lecturer_windows[lecturer_key]:
-                lecturer_windows[lecturer_key][day] = []
-            lecturer_windows[lecturer_key][day].append(slot)
-
-            # Для груп
-            for group_id in event.group_ids:
-                subgroup_id = event.subgroup_ids.get(group_id) if event.subgroup_ids else 'all'
-                group_key = (group_id, subgroup_id, week)
-                if group_key not in group_windows:
-                    group_windows[group_key] = {}
-                if day not in group_windows[group_key]:
-                    group_windows[group_key][day] = []
-                group_windows[group_key][day].append(slot)
-
-        # Підраховуємо кількість вікон для викладачів
-        for lecturer, days in lecturer_windows.items():
-            for slots in days.values():
-                slots.sort()
-                windows = sum([1 for i in range(len(slots)-1) if slots[i+1] - slots[i] > 1])
-                total_penalty += windows
-
-        # Підраховуємо кількість вікон для груп
-        for group, days in group_windows.items():
-            for slots in days.values():
-                slots.sort()
-                windows = sum([1 for i in range(len(slots)-1) if slots[i+1] - slots[i] > 1])
-                total_penalty += windows
-
-        return total_penalty
-
-# Генерація початкової популяції
-def generate_initial_population(pop_size, groups, subjects, lecturers, auditoriums):
+def create_initial_population():
     population = []
-    for _ in range(pop_size):
+    for i in range(POPULATION_SIZE):
         schedule = Schedule()
-        for subj in subjects:
-            # Визначаємо, на які тижні проводиться предмет
-            weeks = [subj['WeekType']] if subj['WeekType'] in WEEKS else WEEKS
-            for week in weeks:
-                # Лекції
-                for _ in range(subj['NumLectures']):
-                    event = create_random_event(subj, groups, lecturers, auditoriums, 'Лекція', week)
-                    schedule.add_event(event)
-                # Практичні/Лабораторні
-                for _ in range(subj['NumPracticals']):
-                    if subj['RequiresSubgroups']:
-                        # Додаємо події для кожної підгрупи
-                        for subgroup_id in groups[subj['GroupID']]['Subgroups']:
-                            event = create_random_event(subj, groups, lecturers, auditoriums, 'Практика', week, {subj['GroupID']: subgroup_id})
-                            schedule.add_event(event)
-                    else:
-                        event = create_random_event(subj, groups, lecturers, auditoriums, 'Практика', week)
-                        schedule.add_event(event)
+        # Для кожного предмета створюємо заняття та призначаємо їх
+        for subject in subjects:
+            group = next((g for g in groups if g.number == subject.group_id), None)
+            if not group:
+                print(f"Warning: Group {subject.group_id} not found for subject {subject.name}")
+                continue
+            # Лекції
+            lectures_total = subject.num_lectures  # Загальна кількість лекцій за семестр
+            for _ in range(lectures_total):
+                lesson = Lesson(subject, 'Лекція', group)
+                possible_lecturers = get_possible_lecturers(lesson)
+                if not possible_lecturers:
+                    print(f"Cannot assign lecture for {subject.name} to group {group.number}: No available lecturers.")
+                    continue  # Не може бути призначено
+                lecturer = random.choice(possible_lecturers)
+                lesson.lecturer = lecturer
+                lecturer.assigned_hours += 1  # Збільшуємо навантаження
+                # Фільтрація аудиторій за місткістю
+                suitable_auditoriums = [aud for aud in auditoriums if aud.capacity >= group.size]
+                if not suitable_auditoriums:
+                    print(f"No auditorium available for {lesson.subject.name} for group {group.number}")
+                    # Відновлення assigned_hours, оскільки аудиторію не призначено
+                    lecturer.assigned_hours -= 1
+                    continue
+                auditorium = random.choice(suitable_auditoriums)
+                lesson.auditorium = auditorium
+                # Призначення рандомного часового слоту без порушення жорстких обмежень
+                assigned = assign_randomly(lesson, schedule)
+                if not assigned:
+                    # Відновлення assigned_hours, оскільки часового слота не призначено
+                    lecturer.assigned_hours -= 1
+                    print(f"Failed to assign lecture for {lesson.subject.name} to group {group.number}")
+            # Практичні
+            pract_total = subject.num_practicals  # Загальна кількість практичних за семестр
+            if subject.requires_subgroups and group.subgroups:
+                for subgroup in group.subgroups:
+                    # Розраховуємо кількість практичних на підгрупу
+                    num_practicals_per_subgroup = pract_total // len(group.subgroups)
+                    for _ in range(num_practicals_per_subgroup):
+                        lesson = Lesson(subject, 'Практика', group, subgroup)
+                        possible_lecturers = get_possible_lecturers(lesson)
+                        if not possible_lecturers:
+                            print(f"Cannot assign practical for {subject.name} to subgroup {subgroup} of group {group.number}: No available lecturers.")
+                            continue  # Не може бути призначено
+                        lecturer = random.choice(possible_lecturers)
+                        lesson.lecturer = lecturer
+                        lecturer.assigned_hours += 1  # Збільшуємо навантаження
+                        # Розрахунок кількості студентів у підгрупі
+                        subgroup_size = group.size // len(group.subgroups)
+                        suitable_auditoriums = [aud for aud in auditoriums if aud.capacity >= subgroup_size]
+                        if not suitable_auditoriums:
+                            print(f"No auditorium available for {lesson.subject.name} for subgroup {subgroup} of group {group.number}")
+                            # Відновлення assigned_hours, оскільки аудиторію не призначено
+                            lecturer.assigned_hours -= 1
+                            continue
+                        auditorium = random.choice(suitable_auditoriums)
+                        lesson.auditorium = auditorium
+                        # Призначення рандомного часового слоту без порушення жорстких обмежень
+                        assigned = assign_randomly(lesson, schedule)
+                        if not assigned:
+                            # Відновлення assigned_hours, оскільки часового слота не призначено
+                            lecturer.assigned_hours -= 1
+                            print(f"Failed to assign practical for {lesson.subject.name} to subgroup {subgroup} of group {group.number}")
+            else:
+                for _ in range(pract_total):
+                    lesson = Lesson(subject, 'Практика', group)
+                    possible_lecturers = get_possible_lecturers(lesson)
+                    if not possible_lecturers:
+                        print(f"Cannot assign practical for {subject.name} to group {group.number}: No available lecturers.")
+                        continue  # Не може бути призначено
+                    lecturer = random.choice(possible_lecturers)
+                    lesson.lecturer = lecturer
+                    lecturer.assigned_hours += 1  # Збільшуємо навантаження
+                    # Фільтрація аудиторій за місткістю
+                    suitable_auditoriums = [aud for aud in auditoriums if aud.capacity >= group.size]
+                    if not suitable_auditoriums:
+                        print(f"No auditorium available for {lesson.subject.name} for group {group.number}")
+                        # Відновлення assigned_hours, оскільки аудиторію не призначено
+                        lecturer.assigned_hours -= 1
+                        continue
+                    auditorium = random.choice(suitable_auditoriums)
+                    lesson.auditorium = auditorium
+                    # Призначення рандомного часового слоту без порушення жорстких обмежень
+                    assigned = assign_randomly(lesson, schedule)
+                    if not assigned:
+                        # Відновлення assigned_hours, оскільки часового слота не призначено
+                        lecturer.assigned_hours -= 1
+                        print(f"Failed to assign practical for {lesson.subject.name} to group {group.number}")
+        # Обчислення фітнесу
+        schedule.calculate_fitness()
         population.append(schedule)
     return population
 
-def create_random_event(subj, groups, lecturers, auditoriums, event_type, week_type, subgroup_ids=None):
-    timeslot = random.choice([t for t in TIMESLOTS if t.startswith(week_type)])
-    suitable_lecturers = [lid for lid, l in lecturers.items()
-                          if subj['SubjectID'] in l['SubjectsCanTeach'] and event_type in l['TypesCanTeach']]
-    if not suitable_lecturers:
-        return None
-    lecturer_id = random.choice(suitable_lecturers)
-    auditorium_id = random.choice(list(auditoriums.keys()))
-    group_ids = [subj['GroupID']]
-    return Event(timeslot, group_ids, subj['SubjectID'], subj['SubjectName'],
-                 lecturer_id, auditorium_id, event_type, subgroup_ids, week_type)
+def assign_randomly(lesson, schedule):
+    available_time_slots = TIME_SLOTS.copy()
+    random.shuffle(available_time_slots)
+    for time_slot in available_time_slots:
+        # Перевірка відповідності тижня
+        week_type = lesson.subject.week_type
+        if week_type == 'even' and not is_even_week(time_slot):
+            continue
+        if week_type == 'odd' and not is_odd_week(time_slot):
+            continue
+        # Якщо week_type 'both', немає обмежень
+        # Перевірка наявності конфліктів
+        if not is_conflict(lesson, time_slot, schedule):
+            lesson.time_slot = time_slot
+            schedule.timetable[time_slot].append(lesson)
+            return True
+    # Якщо не вдалося призначити
+    print(f"Unable to assign {lesson.type} for {lesson.subject.name} to group {lesson.group.number}" +
+          (f" (Subgroup {lesson.subgroup})" if lesson.subgroup else ""))
+    return False
 
-# Відбір популяції
-def select_population(population, groups, lecturers, auditoriums, fitness_function):
-    population.sort(key=lambda x: fitness_function(x, groups, lecturers, auditoriums))
-    return population[:len(population)//2] if len(population) > 1 else population
+def is_even_week(time_slot):
+    # Використовуємо номер тижня року для визначення парності
+    # В реальній ситуації потрібно враховувати, коли семестр починається
+    # Тут для простоти використовуємо поточний тиждень
+    current_date = datetime.datetime.now()
+    week_number = current_date.isocalendar()[1]
+    return week_number % 2 == 0
 
-# Реалізація "травоїдного" згладжування
-def herbivore_smoothing(population, best_schedule, lecturers, auditoriums):
-    # Додаємо невеликі випадкові варіації навколо найкращого розкладу
-    new_population = []
-    for _ in range(len(population)):
-        new_schedule = copy.deepcopy(best_schedule)
-        mutate(new_schedule, lecturers, auditoriums, intensity=0.1)
-        new_population.append(new_schedule)
-    return new_population
+def is_odd_week(time_slot):
+    week_number = datetime.datetime.now().isocalendar()[1]
+    return week_number % 2 != 0
 
-# Реалізація "хижака"
-def predator_approach(population, groups, lecturers, auditoriums, fitness_function):
-    # Видаляємо найгірші розклади
-    population = select_population(population, groups, lecturers, auditoriums, fitness_function)
-    return population
+def selection(population):
+    # Вибираємо найкращі розклади на основі фітнесу
+    population.sort(key=lambda x: x.fitness, reverse=True)
+    selected = population[:POPULATION_SIZE // 2]
+    return selected
 
-# Реалізація "дощу"
-def rain(population_size, groups, subjects, lecturers, auditoriums):
-    # Додаємо нові випадкові розклади до популяції
-    new_population = generate_initial_population(population_size, groups, subjects, lecturers, auditoriums)
-    return new_population
-
-# Нетривіальна мутація
-def mutate(schedule, lecturers, auditoriums, intensity=0.3):
-    num_events_to_mutate = int(len(schedule.events) * intensity)
-    if num_events_to_mutate < 1:
-        num_events_to_mutate = 1
-    events_to_mutate = random.sample(schedule.events, num_events_to_mutate)
-    for event in events_to_mutate:
-        # З випадковою ймовірністю змінюємо різні параметри
+def crossover(parent1, parent2):
+    child = Schedule()
+    for time_slot in TIME_SLOTS:
+        # Вибираємо, чи копіювати заняття з parent1 або parent2
         if random.random() < 0.5:
-            week_type = event.week_type if event.week_type in WEEKS else random.choice(WEEKS)
-            event.timeslot = random.choice([t for t in TIMESLOTS if t.startswith(week_type)])
-        if random.random() < 0.5:
-            event.auditorium_id = random.choice(list(auditoriums.keys()))
-        if random.random() < 0.5:
-            suitable_lecturers = [lid for lid, l in lecturers.items()
-                                  if event.subject_id in l['SubjectsCanTeach'] and event.event_type in l['TypesCanTeach']]
-            if suitable_lecturers:
-                event.lecturer_id = random.choice(suitable_lecturers)
+            for lesson in parent1.timetable[time_slot]:
+                if not is_conflict(lesson, time_slot, child):
+                    # Глибоке копіювання заняття
+                    copied_lesson = copy.deepcopy(lesson)
+                    child.timetable[time_slot].append(copied_lesson)
+        else:
+            for lesson in parent2.timetable[time_slot]:
+                if not is_conflict(lesson, time_slot, child):
+                    copied_lesson = copy.deepcopy(lesson)
+                    child.timetable[time_slot].append(copied_lesson)
+    # Розрахунок фітнесу після кросоверу
+    child.calculate_fitness()
+    return child
 
-# Генетичний алгоритм
-def genetic_algorithm(groups, subjects, lecturers, auditoriums, generations=100):
-    population_size = 50  # Стабільний розмір популяції
-    population = generate_initial_population(population_size, groups, subjects, lecturers, auditoriums)
-    fitness_function = Schedule.fitness  # Можна переключитися на fitness_alternative
+def mutate(schedule):
+    # Випадкова зміна декількох занять у розкладі
+    for _ in range(5):  # Кількість мутацій
+        time_slot = random.choice(TIME_SLOTS)
+        if schedule.timetable[time_slot]:
+            lesson = random.choice(schedule.timetable[time_slot])
+            original_time_slot = lesson.time_slot
+            new_time_slot = random.choice(TIME_SLOTS)
+            if new_time_slot == original_time_slot:
+                continue
+            # Перевірка відповідності тижня
+            week_type = lesson.subject.week_type
+            if week_type == 'even' and not is_even_week(new_time_slot):
+                continue
+            if week_type == 'odd' and not is_odd_week(new_time_slot):
+                continue
+            # Перевірка, чи можна призначити новий часовий слот без конфліктів
+            if not is_conflict(lesson, new_time_slot, schedule):
+                # Переміщуємо заняття до нового часового слота
+                schedule.timetable[original_time_slot].remove(lesson)
+                lesson.time_slot = new_time_slot
+                schedule.timetable[new_time_slot].append(lesson)
+    # Розрахунок фітнесу після мутації
+    schedule.calculate_fitness()
 
-    for generation in range(generations):
-        # Оцінка популяції
-        population = select_population(population, groups, lecturers, auditoriums, fitness_function)
-        if not population:
-            print("Популяція пуста після відбору. Завершення алгоритму.")
-            break
-        best_schedule = population[0]
-        best_fitness = fitness_function(best_schedule, groups, lecturers, auditoriums)
-        print(f"Покоління {generation+1}, Найкраща оцінка: {best_fitness}")
-
-        # Якщо досягли оптимуму
-        if best_fitness == 0:
-            break
-
+def genetic_algorithm():
+    population = create_initial_population()
+    for generation in range(GENERATIONS):
+        selected = selection(population)
         new_population = []
-
-        # Реалізація "хижака"
-        population = predator_approach(population, groups, lecturers, auditoriums, fitness_function)
-
-        # Реалізація "травоїдного" згладжування
-        smoothed_population = herbivore_smoothing(population, best_schedule, lecturers, auditoriums)
-
-        # Реалізація "дощу"
-        rain_population = rain(len(population), groups, subjects, lecturers, auditoriums)
-
-        # Об'єднуємо популяції
-        new_population.extend(population)
-        new_population.extend(smoothed_population)
-        new_population.extend(rain_population)
-
-        # Мутація
-        for schedule in new_population:
-            if random.random() < 0.3:
-                mutate(schedule, lecturers, auditoriums)
-
-        # Зберігаємо стабільний розмір популяції
-        population = new_population[:population_size]
-
+        while len(new_population) < POPULATION_SIZE:
+            parent1, parent2 = random.sample(selected, 2)
+            child = crossover(parent1, parent2)
+            mutate(child)
+            new_population.append(child)
+        population = new_population
+        best_fitness = max(schedule.fitness for schedule in population)
+        if (generation + 1) % 10 == 0 or best_fitness == 1.0:
+            print(f'Generation {generation + 1}: Best Fitness = {best_fitness}\n')
+        if best_fitness == 1.0:
+            break
+    best_schedule = max(population, key=lambda x: x.fitness)
     return best_schedule
 
-# Вивід розкладу
-def print_schedule(schedule, lecturers):
-    schedule_dict = {}
-    for event in schedule.events:
-        if event.timeslot not in schedule_dict:
-            schedule_dict[event.timeslot] = []
-        schedule_dict[event.timeslot].append(event)
+def print_schedule(schedule):
+    even_week_table = []
+    odd_week_table = []
+    headers = [
+        'Timeslot',
+        'Group(s)',
+        'Subject',
+        'Type',
+        'Lecturer',
+        'Auditorium',
+        'Students',
+        'Capacity'
+    ]
 
-    for timeslot in TIMESLOTS:
-        print(f"{timeslot}:")
-        if timeslot in schedule_dict:
-            for event in schedule_dict[timeslot]:
-                group_info = ', '.join([f"Група {gid}" + (f" (Підгрупа {event.subgroup_ids[gid]})" if event.subgroup_ids and gid in event.subgroup_ids else '') for gid in event.group_ids])
-                print(f"  {group_info}, {event.subject_name} ({event.event_type}), "
-                      f"Викладач: {lecturers[event.lecturer_id]['LecturerName']}, Аудиторія: {event.auditorium_id}")
-        else:
-            print("  Вільно")
-        print()
+    for time_slot in TIME_SLOTS:
+        lessons = schedule.timetable[time_slot]
+        for lesson in lessons:
+            # Визначення типу тижня
+            if lesson.subject.week_type == 'even':
+                weeks = ['EVEN']
+            elif lesson.subject.week_type == 'odd':
+                weeks = ['ODD']
+            else:
+                weeks = ['EVEN', 'ODD']
 
-# Основна функція
-def main():
-    # Завантажуємо дані
-    groups = load_groups('groups.csv')
-    subjects = load_subjects('subjects.csv')
-    lecturers = load_lecturers('lecturers.csv')
-    auditoriums = load_auditoriums('auditoriums.csv')
+            # Рядок часового слоту
+            timeslot_str = f"{time_slot[0]}, period {time_slot[1]}"
 
-    # Запускаємо генетичний алгоритм
-    best_schedule = genetic_algorithm(groups, subjects, lecturers, auditoriums)
-    print("\nНайкращий знайдений розклад:\n")
-    print_schedule(best_schedule, lecturers)
+            # Група з підгрупою, якщо є
+            group_str = lesson.group.number
+            if lesson.subgroup:
+                group_str += f" (Subgroup {lesson.subgroup})"
 
-if __name__ == "__main__":
-    main()
+            # Предмет
+            subject_str = lesson.subject.name
+
+            # Тип
+            type_str = lesson.type
+
+            # Викладач
+            lecturer_str = lesson.lecturer.name if lesson.lecturer else "N/A"
+
+            # Аудиторія
+            auditorium_str = lesson.auditorium.id if lesson.auditorium else "N/A"
+
+            # Кількість студентів
+            if lesson.subgroup and lesson.group.subgroups:
+                students = lesson.group.size // len(lesson.group.subgroups)
+            else:
+                students = lesson.group.size
+            students_str = str(students)
+
+            # Місткість аудиторії
+            capacity_str = str(lesson.auditorium.capacity) if lesson.auditorium else "N/A"
+
+            # Додавання рядка до відповідного тижня
+            row = [
+                timeslot_str,
+                group_str,
+                subject_str,
+                type_str,
+                lecturer_str,
+                auditorium_str,
+                students_str,
+                capacity_str
+            ]
+
+            for week in weeks:
+                if week == 'EVEN':
+                    even_week_table.append(row)
+                elif week == 'ODD':
+                    odd_week_table.append(row)
+
+    # Відображення таблиці для Парного Тижня
+    print("\nBest schedule - EVEN week:\n")
+    if even_week_table:
+        print(tabulate(even_week_table, headers=headers, tablefmt="grid", stralign="center"))
+    else:
+        print("No lessons scheduled for EVEN week.\n")
+
+    # Відображення таблиці для Непарного Тижня
+    print("\nBest schedule - ODD week:\n")
+    if odd_week_table:
+        print(tabulate(odd_week_table, headers=headers, tablefmt="grid", stralign="center"))
+    else:
+        print("No lessons scheduled for ODD week.\n")
+
+# Запуск генетичного алгоритму та отримання найкращого розкладу
+best_schedule = genetic_algorithm()
+
+# Вивід фінального розкладу у консоль
+print_schedule(best_schedule)
