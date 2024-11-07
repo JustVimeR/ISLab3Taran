@@ -20,11 +20,11 @@ class Lecturer:
     def __init__(self, lecturer_id, name, subjects_can_teach, types_can_teach, max_hours_per_week):
         self.id = lecturer_id
         self.name = name
-        self.subjects_can_teach = [s.strip() for s in subjects_can_teach.split(';')] if subjects_can_teach else []
-        self.types_can_teach = [t.strip() for t in types_can_teach.split(';')] if types_can_teach else []
+        self.subjectsCanTeach = [s.strip() for s in subjects_can_teach.split(';')] if subjects_can_teach else []
+        self.typesCanTeach = [t.strip() for t in types_can_teach.split(';')] if types_can_teach else []
         self.max_hours_per_week = int(max_hours_per_week)
-        self.assigned_hours_even = 0  # Навантаження на парний тиждень
-        self.assigned_hours_odd = 0   # Навантаження на непарний тиждень
+        self.assHoursEven = 0  # Навантаження на парний тиждень
+        self.assHoursOdd = 0   # Навантаження на непарний тиждень
 
 class Subject:
     def __init__(self, subject_id, name, group_id, num_lectures, num_practicals, requires_subgroups, week_type):
@@ -103,7 +103,7 @@ subjects = filtered_subjects
 subject_ids = set(subject.id for subject in subjects)
 lecturer_subjects = set()
 for lecturer in lecturers:
-    lecturer_subjects.update(lecturer.subjects_can_teach)
+    lecturer_subjects.update(lecturer.subjectsCanTeach)
 
 missing_subjects = subject_ids - lecturer_subjects
 if missing_subjects:
@@ -208,8 +208,8 @@ class Schedule:
 def get_possible_lecturers(lesson):
     # Співставляємо викладачів за subject.id та типом заняття (жорстке обмеження)
     possible = [lecturer for lecturer in lecturers if
-                lesson.subject.id in lecturer.subjects_can_teach and
-                lesson.type in lecturer.types_can_teach]
+                lesson.subject.id in lecturer.subjectsCanTeach and
+                lesson.type in lecturer.typesCanTeach]
     if not possible:
         print(f"No lecturer available for {lesson.subject.name} ({lesson.type}) with subject ID {lesson.subject.id}.")
     return possible
